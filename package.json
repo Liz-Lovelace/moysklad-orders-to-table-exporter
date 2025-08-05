@@ -1,0 +1,11 @@
+{
+  "scripts":{
+    "dev":"./dev.sh",
+    "start":"node backend/main.js"
+  },
+  "type": "module",
+  "dependencies": {
+    "dotenv": "^17.2.1",
+    "express": "^5.1.0"
+  }
+}

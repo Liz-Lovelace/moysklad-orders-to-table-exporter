@@ -1,0 +1,10 @@
+services:
+  moysklad-orders-to-table-exporter:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - API_TOKEN=${API_TOKEN}
+    env_file:
+      - .env
+    restart: unless-stopped
