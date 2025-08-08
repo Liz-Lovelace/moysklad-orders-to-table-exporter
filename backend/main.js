@@ -6,11 +6,21 @@ import { getAllOrders, getSalesChannelsMap } from './moyskladAPI.js';
 
 dotenv.config({ quiet: true });
 
-let cachedMoyskladOrders = [];
-let salesChannelIdToName = new Map();
+let tableData = []; // Array<Array<string>>
+let latestDate = 'N/A';
 
 const app = express();
 app.use(express.json());
+
+function escapeHtml(value) {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 // Function to load and process the HTML template
 function loadTemplate(templateData) {
@@ -29,8 +39,8 @@ function loadTemplate(templateData) {
 // GET / endpoint to display orders from the latest date
 app.get('/', (req, res) => {
   try {
-    // Find the latest date among all orders
-    if (cachedMoyskladOrders.length === 0) {
+    // Serve from precomputed table data
+    if (!tableData || tableData.length === 0) {
       return res.send(`
         <html>
           <head>
@@ -48,52 +58,15 @@ app.get('/', (req, res) => {
       `);
     }
 
-    // Extract dates and find the latest one
-    const dates = cachedMoyskladOrders
-      .map(order => order.moment ? order.moment.split(' ')[0] : null)
-      .filter(date => date !== null);
-    
-    const latestDate = dates.reduce((latest, current) => {
-      return current > latest ? current : latest;
-    });
+    // Build HTML rows from tableData (array of string arrays)
+    const tableRowsHtml = tableData
+      .map(cells => `<tr>${cells.map(cell => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`)
+      .join('');
 
-    // Filter orders for the latest date
-    const latestOrders = cachedMoyskladOrders.filter(order => 
-      order.moment && order.moment.startsWith(latestDate)
-    );
-
-    // Generate table rows
-    const tableRows = latestOrders.map(order => {
-      const salesChannelId = order.salesChannel && order.salesChannel.meta && order.salesChannel.meta.href
-        ? order.salesChannel.meta.href.split('/').pop()
-        : order.salesChannel && order.salesChannel.id
-          ? order.salesChannel.id
-          : undefined;
-      const salesChannelName = (salesChannelId && salesChannelIdToName.get(salesChannelId))
-        || (order.salesChannel && order.salesChannel.name)
-        || 'N/A';
-      const amount = order.sum ? (order.sum / 10000).toLocaleString('ru-RU') : 'N/A';
-      const description = order.description || 'No description';
-      const address = order.shipmentAddress || 
-                    (order.shipmentAddressFull && order.shipmentAddressFull.addInfo) || 
-                    'No address';
-      
-      return `
-        <tr>
-          <td>${order.name || 'N/A'}</td>
-          <td>${salesChannelName}</td>
-          <td class="description">${description}</td>
-          <td class="amount">${amount}</td>
-          <td class="address">${address}</td>
-        </tr>
-      `;
-    }).join('');
-
-    // Load template with data
     const htmlContent = loadTemplate({
       date: latestDate,
-      orderCount: latestOrders.length,
-      tableRows: tableRows
+      orderCount: tableData.length,
+      tableRows: tableRowsHtml
     });
 
     res.send(htmlContent);
@@ -114,30 +87,69 @@ app.get('/', (req, res) => {
 main();
 
 async function main() {
-  /*
   app.listen(3000, () => {
     console.log(`Server running on http://localhost:3000`);
   });
-  */
 
-  await updateOrders();
+  await updateTable();
 
-  console.log(JSON.stringify(cachedMoyskladOrders[0], null, 2))
-  console.log(salesChannelIdToName)
+  console.log(tableData);
   
   // setInterval(updateOrders, 5 * 60 * 1000);
 }
 
-async function updateOrders() {
+function tableRowsFromData(allOrders, salesChannelIdToName) {
+  const dates = (allOrders || [])
+    .map(order => (order && order.moment ? order.moment.split(' ')[0] : null))
+    .filter(date => date !== null);
+
+  const latestDate = dates.length > 0
+    ? dates.reduce((latest, current) => (current > latest ? current : latest))
+    : 'N/A';
+
+  const latestOrders = latestDate === 'N/A'
+    ? []
+    : allOrders.filter(order => order.moment && order.moment.startsWith(latestDate));
+
+  const rows = latestOrders.map(order => {
+    const salesChannelId = order.salesChannel && order.salesChannel.meta && order.salesChannel.meta.href
+      ? order.salesChannel.meta.href.split('/').pop()
+      : order.salesChannel && order.salesChannel.id
+        ? order.salesChannel.id
+        : undefined;
+    const salesChannelName = (salesChannelId && salesChannelIdToName.get(salesChannelId))
+      || (order.salesChannel && order.salesChannel.name)
+      || 'N/A';
+    const amount = order && typeof order.sum === 'number'
+      ? (order.sum / 10000).toLocaleString('ru-RU')
+      : 'N/A';
+    const description = (order && order.description) || 'No description';
+    const address = (order && (order.shipmentAddress 
+                  || (order.shipmentAddressFull && order.shipmentAddressFull.addInfo)))
+                  || 'No address';
+    const orderName = (order && order.name) || 'N/A';
+
+    return [orderName, salesChannelName, description, amount, address];
+  });
+
+  return {
+    date: latestDate,
+    rows
+  };
+}
+
+async function updateTable() {
   try {
     console.log('updating orders...')
     const [orders, channelMap] = await Promise.all([
       getAllOrders(),
       getSalesChannelsMap()
     ]);
-    cachedMoyskladOrders = orders;
-    salesChannelIdToName = channelMap;
-    console.log('Orders updated successfully');
+
+    const result = tableRowsFromData(orders, channelMap);
+    latestDate = result.date;
+    tableData = result.rows;
+    console.log('Table updated successfully');
   } catch (error) {
     console.error('Error updating orders:', error);
   }
