@@ -2,10 +2,12 @@ import dotenv from 'dotenv';
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
+import { getAllOrders, getSalesChannelsMap } from './moyskladAPI.js';
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 let cachedMoyskladOrders = [];
+let salesChannelIdToName = new Map();
 
 const app = express();
 app.use(express.json());
@@ -62,7 +64,14 @@ app.get('/', (req, res) => {
 
     // Generate table rows
     const tableRows = latestOrders.map(order => {
-      const time = order.moment ? order.moment.split(' ')[1] : 'N/A';
+      const salesChannelId = order.salesChannel && order.salesChannel.meta && order.salesChannel.meta.href
+        ? order.salesChannel.meta.href.split('/').pop()
+        : order.salesChannel && order.salesChannel.id
+          ? order.salesChannel.id
+          : undefined;
+      const salesChannelName = (salesChannelId && salesChannelIdToName.get(salesChannelId))
+        || (order.salesChannel && order.salesChannel.name)
+        || 'N/A';
       const amount = order.sum ? (order.sum / 10000).toLocaleString('ru-RU') : 'N/A';
       const description = order.description || 'No description';
       const address = order.shipmentAddress || 
@@ -72,7 +81,7 @@ app.get('/', (req, res) => {
       return `
         <tr>
           <td>${order.name || 'N/A'}</td>
-          <td>${time}</td>
+          <td>${salesChannelName}</td>
           <td class="description">${description}</td>
           <td class="amount">${amount}</td>
           <td class="address">${address}</td>
@@ -105,51 +114,29 @@ app.get('/', (req, res) => {
 main();
 
 async function main() {
+  /*
   app.listen(3000, () => {
     console.log(`Server running on http://localhost:3000`);
   });
+  */
 
   await updateOrders();
 
   console.log(JSON.stringify(cachedMoyskladOrders[0], null, 2))
+  console.log(salesChannelIdToName)
   
-  setInterval(updateOrders, 5 * 60 * 1000);
-}
-
-async function getAllOrders() {
-  const limit = 1000;
-  let offset = 0;
-  let allOrders = [];
-
-  while (true) {
-    const response = await fetch(`https://api.moysklad.ru/api/remap/1.2/entity/customerorder?limit=${limit}&offset=${offset}`, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${process.env.API_TOKEN}`,
-        'Accept-Encoding': 'gzip'
-      }
-    });
-    console.log('fetched some orders')
-
-    const jsonData = await response.json();
-
-    allOrders = allOrders.concat(jsonData.rows);
-
-    if (jsonData.rows.length < limit) {
-      break;
-    }
-
-    offset += limit;
-  }
-  
-  console.log(allOrders.length)
-  return allOrders;
+  // setInterval(updateOrders, 5 * 60 * 1000);
 }
 
 async function updateOrders() {
   try {
     console.log('updating orders...')
-    cachedMoyskladOrders = await getAllOrders();
+    const [orders, channelMap] = await Promise.all([
+      getAllOrders(),
+      getSalesChannelsMap()
+    ]);
+    cachedMoyskladOrders = orders;
+    salesChannelIdToName = channelMap;
     console.log('Orders updated successfully');
   } catch (error) {
     console.error('Error updating orders:', error);
