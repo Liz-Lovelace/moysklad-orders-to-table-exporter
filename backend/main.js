@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { getAllOrders, getSalesChannelsMap, getGoodsForOrder } from './moyskladAPI.js';
+import { getAllOrders, getSalesChannelsMap, getGoodsForOrder, getCounterpartyPhonesMap } from './moyskladAPI.js';
 
 dotenv.config({ quiet: true });
 
@@ -21,17 +21,18 @@ async function main() {
 
   await updateTable();
 
-  console.log(tableData);
-  
-  setInterval(updateTable, 5 * 60 * 1000);
+  // console.log(tableData);
+
+  // setInterval(updateTable, 5 * 60 * 1000);
 }
 
 async function updateTable() {
   try {
     console.log('updating orders...')
-    const [orders, channelMap] = await Promise.all([
+    const [orders, channelMap, counterpartyPhonesMap] = await Promise.all([
       getAllOrders(),
-      getSalesChannelsMap()
+      getSalesChannelsMap(),
+      getCounterpartyPhonesMap()
     ]);
 
     const { date, orders: todayOrders } = filterTodayOrders(orders);
@@ -42,7 +43,9 @@ async function updateTable() {
       ordersWithGoods.push({ order, goods });
     }
 
-    const rows = formatOrderDataIntoTable(ordersWithGoods, channelMap);
+    console.log(JSON.stringify(ordersWithGoods[0], null, 2));
+
+    const rows = formatOrderDataIntoTable(ordersWithGoods, channelMap, counterpartyPhonesMap);
     
     latestDate = date;
     tableData = rows;
@@ -117,7 +120,7 @@ function filterTodayOrders(allOrders) {
   };
 }
 
-function formatOrderDataIntoTable(ordersWithGoods, salesChannelIdToName) {
+function formatOrderDataIntoTable(ordersWithGoods, salesChannelIdToName, counterpartyPhonesMap) {
   const rows = ordersWithGoods.map(orderData => {
     const { order, goods } = orderData;
     
@@ -125,13 +128,17 @@ function formatOrderDataIntoTable(ordersWithGoods, salesChannelIdToName) {
       ? order.salesChannel.meta.href.split('/').pop()
       : order.salesChannel && order.salesChannel.id
         ? order.salesChannel.id
-        : undefined;
+        : null;
+
     const salesChannelName = (salesChannelId && salesChannelIdToName.get(salesChannelId))
       || (order.salesChannel && order.salesChannel.name)
       || 'N/A';
-    const amount = order && typeof order.sum === 'number'
-      ? (order.sum / 10000).toLocaleString('ru-RU')
-      : 'N/A';
+
+    // Extract counterparty ID and get phone number
+    const counterpartyId = order.agent && order.agent.meta && order.agent.meta.href
+      ? order.agent.meta.href.split('/').pop()
+      : null;
+    const counterpartyPhone = (counterpartyId && counterpartyPhonesMap.get(counterpartyId)) || 'N/A';
     
     const goodsDisplay = goods.length > 0 
       ? goods.map(position => {
@@ -143,10 +150,11 @@ function formatOrderDataIntoTable(ordersWithGoods, salesChannelIdToName) {
     
     const address = (order && (order.shipmentAddress 
                   || (order.shipmentAddressFull && order.shipmentAddressFull.addInfo)))
-                  || 'No address';
+                  || 'N/A';
+
     const orderName = (order && order.name) || 'N/A';
 
-    return [orderName, salesChannelName, goodsDisplay, amount, address];
+    return [orderName, salesChannelName, goodsDisplay, address, counterpartyPhone];
   });
 
   return rows;

@@ -50,6 +50,17 @@ export async function getSalesChannelsMap() {
   return idToName;
 }
 
+export async function getCounterpartyPhonesMap() {
+  const rows = await getAllEntities('counterparty');
+  const idToPhone = new Map();
+  for (const row of rows) {
+    if (row.id && row.phone) {
+      idToPhone.set(row.id, row.phone);
+    }
+  }
+  return idToPhone;
+}
+
 async function getAllEntities(entity) {
   const limit = 1000;
   let offset = 0;
