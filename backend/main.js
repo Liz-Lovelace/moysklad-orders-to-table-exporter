@@ -21,29 +21,25 @@ async function main() {
 
   await updateTable();
 
-  // console.log(tableData);
-
-  // setInterval(updateTable, 5 * 60 * 1000);
+  setInterval(updateTable, 5 * 60 * 1000);
 }
 
 async function updateTable() {
   try {
     console.log('updating orders...')
-    const [orders, channelMap, counterpartyPhonesMap] = await Promise.all([
+    let [orders, channelMap, counterpartyPhonesMap] = await Promise.all([
       getAllOrders(),
       getSalesChannelsMap(),
       getCounterpartyPhonesMap()
     ]);
 
-    const { date, orders: todayOrders } = filterTodayOrders(orders);
+    let { date, orders: todayOrders } = filterTodayOrders(orders);
     
     const ordersWithGoods = [];
     for (const order of todayOrders) {
       const goods = await getGoodsForOrder(order);
       ordersWithGoods.push({ order, goods });
     }
-
-    console.log(JSON.stringify(ordersWithGoods[0], null, 2));
 
     const rows = formatOrderDataIntoTable(ordersWithGoods, channelMap, counterpartyPhonesMap);
     
@@ -152,9 +148,15 @@ function formatOrderDataIntoTable(ordersWithGoods, salesChannelIdToName, counter
                   || (order.shipmentAddressFull && order.shipmentAddressFull.addInfo)))
                   || 'N/A';
 
+    const comment = (order && order.shipmentAddressFull && order.shipmentAddressFull.comment)
+                  || '';
+
     const orderName = (order && order.name) || 'N/A';
 
-    return [orderName, salesChannelName, goodsDisplay, address, counterpartyPhone];
+    let leftToPay = (order && order.sum - order.payedSum) || '';
+    leftToPay = leftToPay.toLocaleString('ru-RU');
+
+    return [orderName, salesChannelName, goodsDisplay, address, counterpartyPhone, comment, leftToPay];
   });
 
   return rows;
